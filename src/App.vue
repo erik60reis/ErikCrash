@@ -68,7 +68,8 @@ export default {
       aggressionLevel: 0.7, // Nível de agressividade do sistema (0-1)
       sabotageActivated: false, // Ativado após atingir R$60
       sabotage2Activated: false, // Ativado quando volta para R$35 ou menos
-      sabotage2Force: 0.3 // Intensidade inicial do segundo sabotagem (0-1)
+      sabotage2Force: 0.3, // Intensidade inicial do segundo sabotagem (0-1)
+      cheatNextRound: false
     })
 
     // Inicializar dados do chart corretamente
@@ -207,6 +208,13 @@ export default {
     }
 
     const calculateAggressiveCrashPoint = () => {
+      console.log('calculateAggressiveCrashPoint - cheatNextRound:', gameState.value.cheatNextRound)
+      // Se cheatNextRound está ativado, forçar crash baixo (1.0x-1.03x)
+      if (gameState.value.cheatNextRound) {
+        gameState.value.cheatNextRound = false
+        return 1 + Math.random() * 0.03
+      }
+
       // Fase 0: sem sabotagem, jogo "fácil"
       if (!gameState.value.sabotageActivated) {
         return generateFriendlyCrashPoint()
@@ -331,8 +339,14 @@ export default {
       gameState.value.coolingDown = gameState.value.streakCount <= -2
       gameState.value.recoveryMode = balance.value < 5 // Aumentado de 8 para 5
       
+      // Se retirou muito rápido, ativa azar no próximo round
+      if (won && multiplier < 1.2 && balance.value >= 35) {
+        console.log('updateGameState - setting cheatNextRound for multiplier', multiplier)
+        gameState.value.cheatNextRound = true
+      }
+      
       // Ativa primeira sabotagem se atingir R$60 pela primeira vez
-      if (!gameState.value.sabotageActivated && balance.value >= 60) {
+      if (!gameState.value.sabotageActivated && balance.value + betAmount.value >= 70) {
         gameState.value.sabotageActivated = true
       }
 
