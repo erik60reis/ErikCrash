@@ -52,27 +52,18 @@ export default {
     const gameInterval = ref(null)
     const balanceHistory = ref([20])
     const rocketPath = ref([])
+    const gamesPlayed = ref(0)
     
-    // Sistema mais agressivo para levar o saldo a zero
     const gameState = ref({
       totalGames: 0,
       recentResults: [], // Últimos 10 resultados
       streakCount: 0, // Sequência atual (positiva = wins, negativa = losses)
       lastMultipliers: [], // Últimos multiplicadores alcançados
       playerMomentum: 0, // -1 a 1, indica se está ganhando ou perdendo
-      luckFactor: 0.5, // Fator de sorte que oscila
       sessionPeak: 20, // Maior saldo da sessão
-      recoveryMode: false, // Modo recuperação quando saldo muito baixo
-      hotStreak: false, // Se está numa sequência de sorte
-      coolingDown: false, // Se está em período de "azar"
-      aggressionLevel: 0.7, // Nível de agressividade do sistema (0-1)
-      sabotageActivated: false, // Ativado após atingir R$60
-      sabotage2Activated: false, // Ativado quando volta para R$35 ou menos
-      sabotage2Force: 0.3, // Intensidade inicial do segundo sabotagem (0-1)
-      cheatNextRound: false
+    
     })
-
-    // Inicializar dados do chart corretamente
+    
     const chartData = reactive({
       labels: [],
       datasets: [{
@@ -172,21 +163,18 @@ export default {
         // Jogador retirou - sempre ganha!
         const winAmount = betAmount.value * currentMultiplier.value
         balance.value += winAmount
-
-        // NUNCA permitir ultrapassar R$80 após sabotagem
-        if (gameState.value.sabotageActivated && balance.value >= 80) {
-          balance.value = 79
-        }
         
         // Atualiza estado positivo
         updateGameState(true, currentMultiplier.value)
         
         endGame(false)
+
+        gamesPlayed.value++
       }
     }
 
     const startGame = () => {
-      const crashPoint = calculateAggressiveCrashPoint()
+      const crashPoint = generateCrashPoint()
       const gameSpeed = 50
       let multiplierIncrease = 0.01
       let lastUpdate = performance.now()
@@ -203,110 +191,49 @@ export default {
           // Jogador perdeu
           updateGameState(false, crashPoint)
           endGame(true)
+          gamesPlayed.value++
         }
       }, gameSpeed)
     }
 
-    const calculateAggressiveCrashPoint = () => {
-      console.log('calculateAggressiveCrashPoint - cheatNextRound:', gameState.value.cheatNextRound)
-      // Se cheatNextRound está ativado, forçar crash baixo (1.0x-1.03x)
-      if (gameState.value.cheatNextRound) {
-        gameState.value.cheatNextRound = false
-        return 1 + Math.random() * 0.03
+    const generateCrashPoint = () => {
+      let result =  Math.random() * 3;
+
+      const random = Math.random() * 100; // Generate random percentage (0-100)
+  
+      // Define probability thresholds
+      // 40% chance for 2x (0-40%)
+      if (random < 40) {
+        result = 1.5 + Math.random() * 0.5; // Crash between 1x and 2x
+      } else if (random < 60) {
+        // 20% chance for 4x (40-60%)
+        result = 2 + Math.random() * 2; // Crash between 2x and 4x
+      } else if (random < 70) {
+        // 10% chance for 8x (60-70%)
+        result = 4 + Math.random() * 4; // Crash between 4x and 8x
       }
 
-      // Fase 0: sem sabotagem, jogo "fácil"
-      if (!gameState.value.sabotageActivated) {
-        return generateFriendlyCrashPoint()
+      if (Math.random() <= 0.2) {
+        result = 1.01;
       }
 
-      // Fase 2: segundo sabotagem (mais suave mas crescente)
-      if (gameState.value.sabotage2Activated) {
-        return generateStage2CrashPoint(gameState.value.sabotage2Force)
+      if (gamesPlayed.value <= 0) {
+        if (result < 2.5) {
+          result = 2.5;
+        }
       }
 
-      // Sistema mais agressivo para drenar o saldo
-      const balanceRatio = balance.value / 20 // Ratio do saldo inicial
-      const momentum = gameState.value.playerMomentum
-      
-      // Base muito agressiva - 80% de chance de crash baixo
-      let crashProbability = 0.8
-      
-      // Se o saldo está alto, seja ainda mais agressivo
-      if (balance.value > 15) {
-        crashProbability = 0.9
-      } else if (balance.value > 10) {
-        crashProbability = 0.85
+      if (result >= calculateMaxMultiplier()) {
+        result = calculateMaxMultiplier() - 0.25;
       }
-      
-      // Se o jogador está ganhando muito, corte a sorte
-      if (gameState.value.hotStreak) {
-        crashProbability = 0.95
-      }
-      
-      // Apenas dê uma folga quando o saldo está muito baixo
-      if (balance.value <= 5) {
-        crashProbability = 0.6 // Um pouco de alívio
-      }
-      
-      // Se está quase sem dinheiro, permita uma pequena recuperação ocasional
-      if (balance.value <= 2) {
-        crashProbability = 0.5 // 50/50 chance
-      }
-      
-      // Aumenta agressividade ao longo do tempo
-      const sessionProgress = gameState.value.totalGames / 20
-      crashProbability += sessionProgress * 0.1
-      
-      return generateAggressiveCrashPoint(Math.min(crashProbability, 0.95))
+
+      return result;
     }
 
-    const generateAggressiveCrashPoint = (crashProbability) => {
-      const random = Math.random()
-      
-      if (random < crashProbability * 0.5) {
-        // Crash instantâneo ou muito baixo (1.0x - 1.2x) - muito frustrante
-        return 1 + (Math.random() * 0.2)
-      } else if (random < crashProbability * 0.8) {
-        // Crash baixo (1.2x - 1.8x) - perda pequena mas constante
-        return 1.2 + (Math.random() * 0.6)
-      } else if (random < crashProbability * 0.95) {
-        // Crash médio-baixo (1.8x - 2.5x) - falsa esperança
-        return 1.8 + (Math.random() * 0.7)
-      } else {
-        // Crash alto raro (2.5x - 4x) - para dar esperança ocasional
-        return 2.5 + (Math.random() * 1.5)
-      }
-    }
-
-    const generateStage2CrashPoint = (force) => {
-      // force varia aprox. 0.3 -> 0.95 enquanto o jogador continua <=35
-      const crashProbability = Math.min(force, 0.95)
-      const random = Math.random()
-
-      if (random < crashProbability * 0.4) {
-        return 1 + Math.random() * 0.5 // 1.0x -1.5x
-      } else if (random < crashProbability * 0.8) {
-        return 1.5 + Math.random() * 0.7 // 1.5x -2.2x
-      } else if (random < crashProbability * 0.95) {
-        return 2.2 + Math.random() * 0.8 // 2.2x -3x
-      } else {
-        return 3 + Math.random() * 2 // 3x -5x
-      }
-    }
-
-    const generateFriendlyCrashPoint = () => {
-      const random = Math.random()
-      // Mais chances de multiplicadores altos para favorecer o jogador
-      if (random < 0.2) {
-        return 1 + (Math.random() * 0.3) // 1.0x - 1.3x (pequena perda)
-      } else if (random < 0.5) {
-        return 1.3 + (Math.random() * 1.2) // 1.3x - 2.5x
-      } else if (random < 0.85) {
-        return 2.5 + (Math.random() * 2) // 2.5x - 4.5x (boas vitórias)
-      } else {
-        return 4.5 + (Math.random() * 3) // 4.5x - 7.5x (raras grandes vitórias)
-      }
+    //calculate mutliplier that will lead the current game the balance to R$ 80
+    const calculateMaxMultiplier = () => {
+      const maxMultiplier = (80 - balance.value) / betAmount.value
+      return maxMultiplier
     }
 
     const updateGameState = (won, multiplier) => {
@@ -335,38 +262,7 @@ export default {
       gameState.value.playerMomentum = (recentWins - 2.5) / 2.5 // -1 a 1
       
       // Estados especiais - mais restritivos
-      gameState.value.hotStreak = gameState.value.streakCount >= 2 // Reduzido de 3 para 2
       gameState.value.coolingDown = gameState.value.streakCount <= -2
-      gameState.value.recoveryMode = balance.value < 5 // Aumentado de 8 para 5
-      
-      // Se retirou muito rápido, ativa azar no próximo round
-      if (won && multiplier < 1.2 && balance.value >= 35) {
-        console.log('updateGameState - setting cheatNextRound for multiplier', multiplier)
-        gameState.value.cheatNextRound = true
-      }
-      
-      // Ativa primeira sabotagem se atingir R$60 pela primeira vez
-      if (!gameState.value.sabotageActivated && balance.value + betAmount.value >= 70) {
-        gameState.value.sabotageActivated = true
-      }
-
-      // Transição para segunda sabotagem quando saldo cai para 35 ou menos
-      if (
-        gameState.value.sabotageActivated &&
-        !gameState.value.sabotage2Activated &&
-        balance.value <= 35
-      ) {
-        gameState.value.sabotage2Activated = true
-        gameState.value.sabotage2Force = 0.3
-      }
-
-      // Se já está na segunda sabotagem e saldo continua <=35, aumente força
-      if (gameState.value.sabotage2Activated && balance.value <= 35) {
-        gameState.value.sabotage2Force = Math.min(
-          0.95,
-          gameState.value.sabotage2Force + 0.05
-        )
-      }
       
       // Atualiza pico da sessão
       if (balance.value > gameState.value.sessionPeak) {
